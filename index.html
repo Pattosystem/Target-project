@@ -117,6 +117,38 @@
   .mail h4{font-size:15px;margin:18px 0 6px;color:var(--navy)}
   .warn{color:var(--red)}
 
+
+  /* ── 管理画面 ── */
+  dialog#admin{max-width:1040px}
+  .tabs{display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--line)}
+  .tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 14px;
+               font-size:13px;font-weight:700;color:var(--stone)}
+  .tabs button.on{color:var(--navy);border-bottom-color:var(--navy)}
+  .apane{padding:16px 24px 24px;max-height:70vh;overflow:auto}
+  .atable{width:100%;border-collapse:collapse;font-size:12.5px}
+  .atable th{text-align:left;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--stone);
+             font-weight:400;padding:0 6px 6px;white-space:nowrap}
+  .atable td{padding:3px 6px;vertical-align:middle}
+  .atable input,.atable select{padding:5px 7px;font-size:12.5px;border-bottom-width:1px}
+  .atable input[type=number]{width:72px;font-size:12.5px;text-align:right}
+  .atable input[type=color]{width:38px;height:28px;padding:2px;cursor:pointer}
+  .atable input[type=checkbox]{width:auto}
+  .w-name{width:120px}.w-dept{width:120px}.w-uid{width:150px}.w-title{width:100%;min-width:170px}
+  .w-unit{width:56px}.w-ord{width:52px}.w-reason{width:150px}
+  .abtn{background:var(--navy);color:#fff;border:0;border-radius:4px;padding:5px 11px;font-size:11.5px;white-space:nowrap}
+  .abtn.ghost{background:none;color:var(--stone);border:1px solid var(--line)}
+  .abtn.danger{background:none;color:var(--red);border:1px solid var(--red)}
+  .abtn:disabled{opacity:.4;cursor:not-allowed}
+  .asec{margin-bottom:18px;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .asec>h4{margin:0;padding:7px 12px;background:#f6f9fc;font-size:13px;display:flex;align-items:center;gap:9px}
+  .asec>h4 .sprite{height:26px}
+  .asec>h4 span{margin-left:auto;font-weight:400;font-size:11px;color:var(--stone)}
+  .asec .inner{padding:8px 12px 12px}
+  .amsg{font-size:12px;margin:8px 0 0;min-height:1.2em}
+  .amsg.ok{color:var(--green)}.amsg.ng{color:var(--red)}
+  .ahint{font-size:11.5px;color:var(--stone);background:#f6f9fc;border-radius:5px;padding:9px 12px;margin-bottom:14px}
+  .newrow{border-top:1px dashed var(--line);margin-top:8px;padding-top:8px}
+
   @media (max-width:720px){
     .grow{grid-template-columns:1fr 3.4fr}
     .gfig{grid-column:1/3;text-align:left;padding-bottom:4px}
@@ -171,7 +203,7 @@
   <div class="panel">
     <div class="tools">
       <span>100%＝その目標そのものの達成です。自分のバーを押すと進捗を記録できます。</span>
-      <span style="margin-left:auto"><button class="btn" id="mail-btn">月次共有メール</button></span>
+      <span style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-solid hidden" id="admin-btn">管理画面</button><button class="btn" id="mail-btn">月次共有メール</button></span>
     </div>
     <div id="list"><p class="loading">読み込み中…</p></div>
   </div>
@@ -179,6 +211,7 @@
 
 <dialog id="detail"></dialog>
 <dialog id="mail"></dialog>
+<dialog id="admin"></dialog>
 
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -218,6 +251,7 @@ async function start(){
   ME = emp;
   $('whoName').textContent = emp ? emp.name : user.email;
   $('whoDept').textContent = emp ? emp.dept : '（社員として未登録）';
+  if (emp && emp.is_admin) $('admin-btn').classList.remove('hidden');
   await loadBoard();
 }
 
@@ -389,5 +423,237 @@ $('list').addEventListener('click', e=>{
   if (b) openDetail(b.dataset.p, b.dataset.g);
 });
 $('mail-btn').addEventListener('click', openMail);
+
+/* ══════════════════════════════════════════════════════════
+   管理画面（is_admin の人だけ）
+   ══════════════════════════════════════════════════════════ */
+let ADMIN = { emps:[], goals:[], periods:[], cur:null };
+let ATAB = 'emp';
+
+const SPRITE_NAMES = {1:'黒',2:'青',3:'緑',4:'赤',5:'黄',6:'グレー',7:'ピンク',8:'水色'};
+const spriteOptions = v => Object.entries(SPRITE_NAMES)
+  .map(([k,n])=>`<option value="${k}"${+v===+k?' selected':''}>${k}. ${n}</option>`).join('');
+
+async function loadAdmin(){
+  const [{data:emps}, {data:periods}] = await Promise.all([
+    sb.from('employees').select('*').order('sort_order'),
+    sb.from('periods').select('*').order('starts_on', {ascending:false})
+  ]);
+  const cur = (periods||[]).find(p=>p.is_current) || null;
+  let goals = [];
+  if (cur){
+    const { data } = await sb.from('goals').select('*').eq('period_id', cur.id).order('sort_order');
+    goals = data || [];
+  }
+  ADMIN = { emps: emps||[], goals, periods: periods||[], cur };
+}
+
+async function openAdmin(){
+  await loadAdmin();
+  const d = $('admin');
+  d.innerHTML = `
+    <div class="d-head"><h3>管理画面<span class="sub">目標と社員の登録・変更ができます</span></h3>
+      <button class="x" aria-label="閉じる" data-close>×</button></div>
+    <div class="tabs">
+      <button data-tab="emp">社員</button>
+      <button data-tab="goal">目標</button>
+      <button data-tab="period">期間</button>
+    </div>
+    <div class="apane" id="apane"></div>`;
+  d.querySelector('[data-close]').addEventListener('click', ()=>d.close());
+  d.querySelectorAll('.tabs button').forEach(b=>
+    b.addEventListener('click', ()=>{ ATAB = b.dataset.tab; renderAdmin(); }));
+  if (!d.open) d.showModal();
+  renderAdmin();
+}
+
+function renderAdmin(){
+  const d = $('admin');
+  d.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.tab===ATAB));
+  const pane = $('apane');
+  if (ATAB === 'emp')    pane.innerHTML = adminEmpHTML();
+  if (ATAB === 'goal')   pane.innerHTML = adminGoalHTML();
+  if (ATAB === 'period') pane.innerHTML = adminPeriodHTML();
+  wireAdmin();
+}
+
+/* ── 社員タブ ── */
+function adminEmpHTML(){
+  const row = (e) => `
+    <tr data-emp="${e ? e.id : 'new'}">
+      <td><input class="w-name" data-f="name"  value="${e?e.name:''}" placeholder="氏名"></td>
+      <td><input class="w-dept" data-f="dept"  value="${e?e.dept:''}" placeholder="部署"></td>
+      <td><select data-f="sprite">${spriteOptions(e?e.sprite:1)}</select></td>
+      <td><input type="color" data-f="color" value="${e?e.color:'#2f6fb0'}"></td>
+      <td><input type="number" class="w-ord" data-f="sort_order" value="${e?e.sort_order:0}"></td>
+      <td style="text-align:center"><input type="checkbox" data-f="is_admin" ${e&&e.is_admin?'checked':''}></td>
+      <td style="text-align:center"><input type="checkbox" data-f="active" ${!e||e.active?'checked':''}></td>
+      <td><input class="w-uid" data-f="user_id" value="${e&&e.user_id?e.user_id:''}" placeholder="未連携"></td>
+      <td><button class="abtn" data-save-emp="${e?e.id:'new'}">${e?'保存':'追加'}</button></td>
+    </tr>`;
+  return `
+    <p class="ahint">ログイン用のアカウントは Supabase の Authentication → Users で作ります。
+      作成後に表示される UID をこの表の「USER ID」欄に貼ると、その人がログインできるようになります。
+      先に氏名と目標だけ登録して、UIDは後から入れても構いません。</p>
+    <table class="atable">
+      <tr><th>氏名</th><th>部署</th><th>選手</th><th>色</th><th>並び</th><th>管理者</th><th>在籍</th><th>USER ID</th><th></th></tr>
+      ${ADMIN.emps.map(row).join('')}
+      <tr><td colspan="9" style="padding-top:10px"><b style="font-size:11.5px;color:var(--stone)">新しく追加</b></td></tr>
+      ${row(null)}
+    </table>
+    <p class="amsg" id="amsg"></p>`;
+}
+
+/* ── 目標タブ ── */
+function adminGoalHTML(){
+  if (!ADMIN.cur) return `<p class="ahint">現在の期間が設定されていません。「期間」タブで設定してください。</p>`;
+  const goalRow = (emp, g) => `
+    <tr data-goal="${g ? g.id : 'new'}" data-emp="${emp.id}">
+      <td><input class="w-title" data-f="title" value="${g?g.title.replace(/"/g,'&quot;'):''}" placeholder="目標の内容"></td>
+      <td><input class="w-unit" data-f="unit" value="${g?g.unit:''}" placeholder="件"></td>
+      <td><input type="number" data-f="start_value" value="${g?g.start_value:0}" step="any"></td>
+      <td><input type="number" data-f="target_value" value="${g?g.target_value:0}" step="any"></td>
+      <td><select data-f="direction">
+            <option value="up"${!g||g.direction==='up'?' selected':''}>増やす</option>
+            <option value="down"${g&&g.direction==='down'?' selected':''}>減らす</option></select></td>
+      <td style="text-align:center"><input type="checkbox" data-f="is_primary" ${g&&g.is_primary?'checked':''}></td>
+      <td><input type="number" class="w-ord" data-f="sort_order" value="${g?g.sort_order:0}"></td>
+      <td>${g?`<input class="w-reason" data-f="change_reason" placeholder="変更理由">`:''}</td>
+      <td><button class="abtn" data-save-goal="${g?g.id:'new'}">${g?'保存':'追加'}</button>
+          ${g?`<button class="abtn danger" data-del-goal="${g.id}">削除</button>`:''}</td>
+    </tr>`;
+  const head = `<tr><th>目標</th><th>単位</th><th>期首</th><th>目標値</th><th>方向</th><th>本命</th><th>並び</th><th>変更理由</th><th></th></tr>`;
+  return `
+    <p class="ahint">「期首」は期間が始まった時点の数字です。ここが空だと達成率が正しく出ません。
+      減らす目標（誤出荷など）は「方向」を減らすにしてください。
+      登録済みの目標を変えるときは、変更理由を入れてください。全員に見える履歴に残ります。</p>
+    ${ADMIN.emps.filter(e=>e.active).map(e=>{
+      const gs = ADMIN.goals.filter(g=>g.employee_id===e.id);
+      return `<div class="asec">
+        <h4><img class="sprite" src="${R[e.sprite]||R[1]}" alt="">${e.name}
+          <span>${e.dept}　目標${gs.length}件</span></h4>
+        <div class="inner"><table class="atable">${head}
+          ${gs.map(g=>goalRow(e,g)).join('')}
+          <tr class="newrow"><td colspan="9" style="padding-top:6px">
+            <b style="font-size:11.5px;color:var(--stone)">この人に目標を追加</b></td></tr>
+          ${goalRow(e,null)}
+        </table></div></div>`;
+    }).join('')}
+    <p class="amsg" id="amsg"></p>`;
+}
+
+/* ── 期間タブ ── */
+function adminPeriodHTML(){
+  return `
+    <p class="ahint">「現在の期間」に設定されたものだけがボードに表示されます。
+      期が変わったら新しい期間を追加して、現在に切り替えてください。前の期の目標と記録はそのまま残ります。</p>
+    <table class="atable">
+      <tr><th>名称</th><th>開始</th><th>終了</th><th>状態</th><th></th></tr>
+      ${ADMIN.periods.map(p=>`
+        <tr data-period="${p.id}">
+          <td><input data-f="name" value="${p.name}" style="width:180px"></td>
+          <td><input type="date" data-f="starts_on" value="${p.starts_on}"></td>
+          <td><input type="date" data-f="ends_on" value="${p.ends_on}"></td>
+          <td>${p.is_current?'<b style="color:var(--green)">現在</b>':'<span style="color:var(--stone)">―</span>'}</td>
+          <td><button class="abtn" data-save-period="${p.id}">保存</button>
+              ${p.is_current?'':`<button class="abtn ghost" data-cur-period="${p.id}">現在にする</button>`}</td>
+        </tr>`).join('')}
+      <tr><td colspan="5" style="padding-top:10px"><b style="font-size:11.5px;color:var(--stone)">新しい期間</b></td></tr>
+      <tr data-period="new">
+        <td><input data-f="name" placeholder="2026年 12月〜2月" style="width:180px"></td>
+        <td><input type="date" data-f="starts_on"></td>
+        <td><input type="date" data-f="ends_on"></td>
+        <td></td>
+        <td><button class="abtn" data-save-period="new">追加</button></td>
+      </tr>
+    </table>
+    <p class="amsg" id="amsg"></p>`;
+}
+
+/* ── 保存処理 ── */
+const rowValues = tr => {
+  const o = {};
+  tr.querySelectorAll('[data-f]').forEach(el=>{
+    o[el.dataset.f] = el.type==='checkbox' ? el.checked
+                    : el.type==='number'   ? (el.value===''?null:Number(el.value))
+                    : el.value.trim();
+  });
+  return o;
+};
+const msg = (t, ok) => { const m = $('amsg'); if(!m) return;
+  m.textContent = t; m.className = 'amsg ' + (ok?'ok':'ng'); };
+
+function wireAdmin(){
+  const d = $('admin');
+
+  d.querySelectorAll('[data-save-emp]').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr'), v = rowValues(tr), id = b.dataset.saveEmp;
+    if (!v.name || !v.dept) return msg('氏名と部署は必須です', false);
+    if (!v.user_id) v.user_id = null;
+    b.disabled = true;
+    const q = id==='new' ? sb.from('employees').insert(v)
+                         : sb.from('employees').update(v).eq('id', id);
+    const { error } = await q; b.disabled = false;
+    if (error) return msg('保存できませんでした：' + error.message, false);
+    msg(id==='new' ? `${v.name} さんを追加しました` : `${v.name} さんを保存しました`, true);
+    await loadAdmin(); renderAdmin(); await loadBoard();
+  }));
+
+  d.querySelectorAll('[data-save-goal]').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr'), v = rowValues(tr), id = b.dataset.saveGoal;
+    if (!v.title || !v.unit) return msg('目標の内容と単位は必須です', false);
+    if (v.start_value === v.target_value) return msg('期首と目標値が同じです', false);
+    b.disabled = true;
+    let error;
+    if (id === 'new'){
+      delete v.change_reason;
+      ({ error } = await sb.from('goals').insert({
+        ...v, employee_id: tr.dataset.emp, period_id: ADMIN.cur.id }));
+    } else {
+      if (!v.change_reason) { b.disabled = false; return msg('変更理由を入れてください（履歴に残ります）', false); }
+      ({ error } = await sb.from('goals').update(v).eq('id', id));
+    }
+    b.disabled = false;
+    if (error) return msg('保存できませんでした：' + error.message, false);
+    msg(id==='new' ? '目標を追加しました' : '目標を保存しました（変更履歴に残りました）', true);
+    await loadAdmin(); renderAdmin(); await loadBoard();
+  }));
+
+  d.querySelectorAll('[data-del-goal]').forEach(b=>b.addEventListener('click', async ()=>{
+    if (!confirm('この目標を削除します。これまでの記録も一緒に消えます。よろしいですか？')) return;
+    b.disabled = true;
+    const { error } = await sb.from('goals').delete().eq('id', b.dataset.delGoal);
+    b.disabled = false;
+    if (error) return msg('削除できませんでした：' + error.message, false);
+    msg('削除しました', true);
+    await loadAdmin(); renderAdmin(); await loadBoard();
+  }));
+
+  d.querySelectorAll('[data-save-period]').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr'), v = rowValues(tr), id = b.dataset.savePeriod;
+    if (!v.name || !v.starts_on || !v.ends_on) return msg('名称と開始・終了日は必須です', false);
+    b.disabled = true;
+    const q = id==='new' ? sb.from('periods').insert(v)
+                         : sb.from('periods').update(v).eq('id', id);
+    const { error } = await q; b.disabled = false;
+    if (error) return msg('保存できませんでした：' + error.message, false);
+    msg('保存しました', true);
+    await loadAdmin(); renderAdmin(); await loadBoard();
+  }));
+
+  d.querySelectorAll('[data-cur-period]').forEach(b=>b.addEventListener('click', async ()=>{
+    if (!confirm('この期間を「現在」に切り替えます。ボードの表示が入れ替わります。よろしいですか？')) return;
+    b.disabled = true;
+    await sb.from('periods').update({is_current:false}).neq('id','00000000-0000-0000-0000-000000000000');
+    const { error } = await sb.from('periods').update({is_current:true}).eq('id', b.dataset.curPeriod);
+    b.disabled = false;
+    if (error) return msg('切り替えできませんでした：' + error.message, false);
+    msg('現在の期間を切り替えました', true);
+    await loadAdmin(); renderAdmin(); await loadBoard();
+  }));
+}
+
+$('admin-btn').addEventListener('click', openAdmin);
+
 </script>
 </html>
