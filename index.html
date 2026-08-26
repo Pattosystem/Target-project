@@ -41,6 +41,19 @@
   .stats dd small{font-size:11px;font-family:var(--sans);color:var(--stone);margin-left:2px;font-weight:400}
   .stats dd.warn{color:var(--red)}
 
+  .dls{display:flex;gap:0;background:#fff;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .dls .lbl{padding:7px 16px;font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;color:var(--stone);
+            display:flex;align-items:center;border-right:1px solid var(--line)}
+  .dl{flex:1 1 130px;padding:6px 16px;border-right:1px solid var(--line);font-size:11px;line-height:1.35}
+  .dl:last-child{border-right:0}
+  .dl b{display:block;font-family:var(--mono);font-size:15px;font-weight:700;color:var(--navy)}
+  .dl em{font-style:normal;font-size:10px;color:var(--stone)}
+  .dl.done{background:#f4f7fa}
+  .dl.done b{color:var(--stone)}
+  .dl.done em{color:var(--green)}
+  .dl.next{background:#fff6e8}
+  .dl.next b{color:#c8621f}
+  .dl.next em{color:#c8621f;font-weight:700}
   .panel{background:#fff;border-radius:0 0 10px 10px;padding:10px clamp(12px,2vw,22px) 14px;box-shadow:0 10px 30px -18px rgba(18,60,99,.5)}
   .tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:9px}
   .tools>span{font-size:12px;color:var(--stone)}
@@ -170,12 +183,14 @@
     <div><dt>MEMBERS</dt><dd id="s-mem">—<small>名</small></dd></div>
     <div><dt>GOALS</dt><dd id="s-goal">—<small>件</small></dd></div>
     <div><dt>AVG</dt><dd id="s-avg">—<small>%</small></dd></div>
-    <div><dt>NOT UPDATED</dt><dd id="s-stale" class="warn">—<small>件</small></dd></div>
+    <div><dt>今回 未報告</dt><dd id="s-stale" class="warn">—<small>件</small></dd></div>
   </dl>
+
+  <div class="dls hidden" id="dls"></div>
 
   <div class="panel">
     <div class="tools">
-      <span>100%＝その目標そのものの達成です。自分のバーを押すと進捗を記録できます。</span>
+      <span id="hint">100%＝その目標そのものの達成です。自分のバーを押すと進捗を記録できます。</span>
       <span style="margin-left:auto;display:flex;gap:8px"><a class="btn btn-solid hidden" id="admin-link" href="./admin.html">管理画面</a><button class="btn" id="mail-btn">月次共有メール</button></span>
     </div>
     <div id="list"><p class="loading">読み込み中…</p></div>
@@ -242,9 +257,64 @@ async function loadBoard(){
     map.get(row.employee_id).goals.push(row);
   }
   PEOPLE = [...map.values()];
-  const { data: p } = await sb.from('periods').select('name').eq('is_current', true).maybeSingle();
+  const { data: p } = await sb.from('periods').select('*').eq('is_current', true).maybeSingle();
+  PERIOD = p || null;
+  CP = buildCheckpoints(p);
   $('periodLabel').textContent = p ? `― ${p.name} ／ 全社共有` : '― 全社共有';
+  renderDeadlines();
+  if (CP && CP.next)
+    $('hint').textContent = `次の報告期日は ${dayStr(CP.next)}（あと${daysLeft(CP.next)}日）です。自分のバーを押して、今の数字を入れてください。`;
   render();
+}
+
+let PERIOD = null, CP = null;
+
+const addMonths = (d,n) => {
+  const x = new Date(d), day = x.getDate();
+  x.setMonth(x.getMonth()+n);
+  if (x.getDate() < day) x.setDate(0);   // 31日→30日などの調整
+  return x;
+};
+const dayStr = d => `${d.getMonth()+1}月${d.getDate()}日`;
+const daysLeft = d => Math.ceil((d - new Date(new Date().toDateString())) / 86400000);
+
+/* 発表会の日から1か月ごとの報告期日を組み立てる */
+function buildCheckpoints(p){
+  if (!p || !p.kickoff_on) return null;
+  const kickoff = new Date(p.kickoff_on + 'T00:00:00');
+  const end = new Date(p.ends_on + 'T23:59:59');
+  const dates = [];
+  for (let i=1; i<=12; i++){
+    const d = addMonths(kickoff, i);
+    if (d > end) break;
+    dates.push(d);
+  }
+  const today = new Date(new Date().toDateString());
+  const nextIdx = dates.findIndex(d => d >= today);
+  const windowStart = nextIdx === -1 ? (dates[dates.length-1] || kickoff)
+                    : nextIdx === 0  ? kickoff
+                    : dates[nextIdx-1];
+  return { kickoff, dates, nextIdx, windowStart, next: nextIdx === -1 ? null : dates[nextIdx] };
+}
+
+/* 今回の報告が出ているか */
+const notReported = g =>
+  !CP ? g.is_stale
+      : (!g.last_logged_at || new Date(g.last_logged_at) < CP.windowStart);
+
+function renderDeadlines(){
+  const box = $('dls');
+  if (!CP || !CP.dates.length){ box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = '<span class="lbl">報告期日</span>' + CP.dates.map((d,i)=>{
+    const done = CP.nextIdx === -1 || i < CP.nextIdx;
+    const isNext = i === CP.nextIdx;
+    const left = daysLeft(d);
+    return `<div class="dl ${done?'done':isNext?'next':''}">
+      <b>${dayStr(d)}</b>
+      <em>第${i+1}回${done ? '　締切済み' : isNext ? `　あと${left}日` : ''}</em>
+    </div>`;
+  }).join('');
 }
 
 const avgOf = p => Math.round(p.goals.reduce((s,g)=>s+g.progress_pct,0)/p.goals.length);
@@ -259,21 +329,21 @@ function barHTML(person, g, pct, big){
 
 function render(){
   $('list').innerHTML = PEOPLE.map((p,i)=>{
-    const st = p.goals.filter(g=>g.is_stale).length;
+    const st = p.goals.filter(notReported).length;
     const mine = ME && p.id === ME.id;
     return `<div class="person${mine?' mine':''}">
       <div class="phead">
         <span class="num" style="background:${p.color}">${i+1}</span>
         <span class="pname">${p.name}<em>${p.dept}</em>${mine?'<span class="tag">あなた</span>':''}</span>
         <span class="pmeta">目標${p.goals.length}件 ／ 平均 <b>${avgOf(p)}%</b>
-          ${st?`<br><span class="warn">${st}件が未更新</span>`:''}</span>
+          ${st?`<br><span class="warn">${st}件が今回未報告</span>`:''}</span>
       </div>
       ${p.goals.map(g=>`
         <button class="grow" data-p="${p.id}" data-g="${g.goal_id}">
           <span class="gname">${g.title}<em>${g.start_value}${g.unit} → ${g.target_value}${g.unit}</em></span>
           <span class="barwrap">${barHTML(p,g,g.progress_pct)}</span>
           <span class="gfig">${g.current_value}${g.unit}
-            <em class="${g.is_stale?'stale':''}">${g.is_stale?'更新が止まっています':'更新 '+fmtDate(g.last_logged_at)}</em></span>
+            <em class="${notReported(g)?'stale':''}">${notReported(g)?'今回まだ報告がありません':'報告済み '+fmtDate(g.last_logged_at)}</em></span>
         </button>`).join('')}
     </div>`;
   }).join('');
@@ -283,7 +353,7 @@ function render(){
   $('s-mem').innerHTML  = PEOPLE.length+'<small>名</small>';
   $('s-goal').innerHTML = gs.length+'<small>件</small>';
   $('s-avg').innerHTML  = Math.round(gs.reduce((s,g)=>s+g.progress_pct,0)/gs.length)+'<small>%</small>';
-  $('s-stale').innerHTML= gs.filter(g=>g.is_stale).length+'<small>件</small>';
+  $('s-stale').innerHTML= gs.filter(notReported).length+'<small>件</small>';
 }
 
 /* ── 詳細＋記録 ─────────────────────── */
@@ -315,6 +385,8 @@ async function openDetail(pid, gid){
         <p class="fine">前提が大きく変わった場合のみ、管理者の承認で変更できます。変更履歴は全員に残ります。</p>
       </div></div>
       ${mine ? `
+        ${CP && CP.next ? `<p style="font-size:12.5px;background:#fff6e8;color:#c8621f;border-radius:5px;
+          padding:8px 12px;margin:0 0 14px"><b>今回の報告期日：${dayStr(CP.next)}</b>（あと${daysLeft(CP.next)}日）</p>` : ''}
         <label for="cv">いまの数字を記録する</label>
         <div class="r">
           <input type="number" id="cv" value="${g.current_value}" step="any">
@@ -364,8 +436,8 @@ async function openDetail(pid, gid){
 
 /* ── 月次メール文面 ─────────────────── */
 function openMail(){
-  const gs = allGoals(), stale = gs.filter(g=>g.is_stale);
-  const staleWho = PEOPLE.filter(p=>p.goals.some(g=>g.is_stale));
+  const gs = allGoals(), stale = gs.filter(notReported);
+  const staleWho = PEOPLE.filter(p=>p.goals.some(notReported));
   const d = $('mail');
   d.innerHTML = `
     <div class="d-head"><h3>月次共有メール（文面）</h3>
@@ -373,18 +445,19 @@ function openMail(){
     <div class="d-body mail">
       <div class="subj"><b>SUBJECT</b>【3か月目標ロードマップ】今月の進捗共有</div>
       <p>おつかれさまです。現時点の進捗を共有します。全員分あわせて <b>${gs.length}件</b> の目標のうち、
-      <b>${stale.length}件</b> が今月まだ更新されていません。<br>
+      <b>${stale.length}件</b> が今回まだ報告されていません。
+      ${CP && CP.next ? `次の報告期日は <b>${dayStr(CP.next)}</b>（あと${daysLeft(CP.next)}日）です。` : ''}<br>
       達成率の高低は目標の難易度で変わります。数字より「次の1か月でやること」が具体になっているかを見てください。</p>
       <h4>メンバー別</h4>
       ${PEOPLE.map(p=>`<div class="mp"><b>${p.name}</b>
         <span style="color:var(--stone);font-size:12px">　${p.dept}　平均 ${avgOf(p)}%</span>
         ${p.goals.map(g=>`<div class="mg"><span>${g.title}<br>
           <span style="color:var(--navy-2)">→ ${g.next_action || '（未記入）'}</span></span>
-          <span>${g.progress_pct}%${g.is_stale?'<br><span class="warn">未更新</span>':''}</span></div>`).join('')}
+          <span>${g.progress_pct}%${notReported(g)?'<br><span class="warn">未報告</span>':''}</span></div>`).join('')}
       </div>`).join('')}
-      ${staleWho.length?`<h4>今月の更新が確認できていない方</h4>
+      ${staleWho.length?`<h4>今回の報告が確認できていない方</h4>
       <p>${staleWho.map(p=>p.name).join('、')}　—　進んでいないことを責める趣旨ではありません。
-      手が止まっている理由を一緒に見たいので、今週中に更新してください。</p>`:''}
+      手が止まっている理由を一緒に見たいので、期日までに入力してください。</p>`:''}
       <div style="height:16px"></div><button class="btn" data-close>閉じる</button>
     </div>`;
   d.showModal();
