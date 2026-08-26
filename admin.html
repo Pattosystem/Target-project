@@ -237,22 +237,25 @@ function goalHTML(){
 /* ── 期間 ── */
 function periodHTML(){
   return `
-    <p class="ahint">「現在」に設定された期間だけがボードに表示されます。
+    <p class="ahint"><b>発表会の日</b>を起点に、1か月ごとの報告期日が自動で計算されます（8月23日なら 9/23・10/23・11/23）。
+      「現在」に設定された期間だけがボードに表示されます。
       期が変わったら新しい期間を追加して切り替えてください。前の期の目標と記録はそのまま残ります。</p>
     <div class="scroll"><table class="atable">
-      <tr><th>名称</th><th>開始</th><th>終了</th><th>状態</th><th></th></tr>
+      <tr><th>名称</th><th>発表会の日</th><th>開始</th><th>終了</th><th>状態</th><th></th></tr>
       ${ADMIN.periods.map(p=>`
         <tr data-period="${p.id}">
           <td><input data-f="name" value="${p.name}" style="width:190px"></td>
+          <td><input type="date" data-f="kickoff_on" value="${p.kickoff_on||''}"></td>
           <td><input type="date" data-f="starts_on" value="${p.starts_on}"></td>
           <td><input type="date" data-f="ends_on" value="${p.ends_on}"></td>
           <td>${p.is_current?'<b style="color:var(--green)">現在</b>':'<span style="color:var(--stone)">―</span>'}</td>
           <td><button class="abtn" data-save-period="${p.id}">保存</button>
             ${p.is_current?'':`<button class="abtn ghost" data-cur-period="${p.id}">現在にする</button>`}</td>
         </tr>`).join('')}
-      <tr><td colspan="5" style="padding-top:12px"><b style="font-size:11.5px;color:var(--stone)">新しい期間</b></td></tr>
+      <tr><td colspan="6" style="padding-top:12px"><b style="font-size:11.5px;color:var(--stone)">新しい期間</b></td></tr>
       <tr data-period="new">
         <td><input data-f="name" placeholder="2026年 12月〜2月" style="width:190px"></td>
+        <td><input type="date" data-f="kickoff_on"></td>
         <td><input type="date" data-f="starts_on"></td>
         <td><input type="date" data-f="ends_on"></td><td></td>
         <td><button class="abtn" data-save-period="new">追加</button></td>
@@ -319,6 +322,7 @@ function wire(){
   document.querySelectorAll('[data-save-period]').forEach(b=>b.addEventListener('click', async ()=>{
     const v = rowValues(b.closest('tr')), id = b.dataset.savePeriod;
     if (!v.name || !v.starts_on || !v.ends_on) return msg('名称と開始・終了日は必須です', false);
+    if (!v.kickoff_on) v.kickoff_on = null;
     b.disabled = true;
     const { error } = id==='new' ? await sb.from('periods').insert(v)
                                  : await sb.from('periods').update(v).eq('id', id);
